@@ -1,0 +1,39 @@
+{
+	"name": "@yifangu/sqlite",
+	"version": "1.0.0-alpha.10",
+	"repository": "https://github.com/gyf304/sqlite-wasm",
+	"author": "Yifan Gu <gyf304@users.noreply.github.com>",
+	"license": "MIT",
+	"packageManager": "yarn@3.2.1",
+	"publishConfig": {
+		"access": "public"
+	},
+	"files": [
+		"dist/**/*"
+	],
+	"main": "./dist/index.js",
+	"module": "./dist/index.mjs",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"require": "./dist/index.js",
+			"import": "./dist/index.mjs",
+			"types": "./dist/index.d.ts"
+		},
+		"./dist/wasm/sqlite3.wasm": "./dist/wasm/sqlite3.wasm",
+		"./sqlite3.wasm": "./dist/wasm/sqlite3.wasm"
+	},
+	"devDependencies": {
+		"@types/mocha": "^9.1.1",
+		"@types/node": "^17.0.35",
+		"mocha": "^10.0.0",
+		"ts-node": "^10.8.0",
+		"typescript": "^4.6.4"
+	},
+	"scripts": {
+		"build": "make && rm -rf dist/cjs dist/esm dist/wasm && mkdir -p dist/wasm && cp sqlite/sqlite3.wasm dist/wasm/sqlite3.wasm && tsc -p ./tsconfig.json && tsc -p ./tsconfig.esm.json",
+		"tsr": "node --loader ts-node/esm",
+		"test": "node --enable-source-maps --loader ts-node/esm ./node_modules/mocha/bin/_mocha tests/*",
+		"prepack": "yarn build"
+	}
+}
