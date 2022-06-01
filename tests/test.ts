@@ -114,6 +114,33 @@ describe("SQLite", function () {
 		db.close();
 	});
 
+	it("should support randomness with crypto", async function() {
+		await new Promise<void>((resolve) => {
+			setTimeout(() => {
+				resolve();
+			}, 1000);
+		});
+		const module = await modulePromise;
+		globalThis.crypto = {
+			getRandomValues: (x: ArrayBuffer) => require("crypto").randomFillSync(x)
+		} as any;
+		const sqlite = SQLite.instantiate(module, false);
+		const db = sqlite.open(":memory:");
+		const stmt = db.prepare("SELECT RANDOM(), RANDOM()")!;
+		const columnCount = stmt.columnCount();
+		assert.equal(columnCount, 2);
+		const values: string[] = [];
+		while (stmt.step()) {
+			for (let i = 0; i < columnCount; i++) {
+				values.push(stmt.columnText(i));
+			}
+		}
+		assert.equal(values.length, 2);
+		assert.notEqual(values[0], values[1]);
+		stmt.finalize();
+		db.close();
+	});
+
 	it("should support parameterized query", async function() {
 		const db = await initDb();
 		const stmt = db.prepare("SELECT ?, ?, ?, ?, ?, ?, ?")!;
