@@ -69,4 +69,17 @@ export class SQLiteUtils {
 		const message = this.decodeString(this.exports.sqlite3_errmsg(dbPtr));
 		return new SQLiteError(code, extendedCode, message);
 	}
+
+	public checkError(rc: number, dbPtr?: number): void {
+		if (rc === SQLiteResultCodes.SQLITE_OK || rc === SQLiteResultCodes.SQLITE_ROW || rc === SQLiteResultCodes.SQLITE_DONE) {
+			return;
+		}
+		if (dbPtr === undefined) {
+			throw new SQLiteError(rc);
+		}
+		const error = this.lastError(dbPtr);
+		if (error !== undefined) {
+			throw error;
+		}
+	}
 }

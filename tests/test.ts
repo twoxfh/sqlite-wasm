@@ -35,6 +35,15 @@ describe("SQLite", function () {
 		assert(values[0].startsWith("3."));
 		stmt.finalize();
 		db.close();
+		sqlite.shutdown();
+	});
+
+	it("should crash on file open", async function() {
+		const module = await modulePromise;
+		const sqlite = await SQLite.instantiate(module);
+		assert.throws(() => {
+			sqlite.open("file.sqlite");
+		});
 	});
 
 	it("should return version", async function() {
@@ -46,6 +55,7 @@ describe("SQLite", function () {
 		while (stmt.step()) {
 			for (let i = 0; i < columnCount; i++) {
 				values.push(stmt.columnText(i));
+				assert.equal(stmt.columnName(i), "SQLITE_VERSION()");
 			}
 		}
 		assert.equal(values.length, 1);
@@ -71,6 +81,22 @@ describe("SQLite", function () {
 		db.close();
 	});
 
+	it("should support consts", async function() {
+		const db = await initDb();
+		const stmt = db.prepare(`SELECT 1, 1.2, TRUE, 'TEST'`)!;
+		const columnCount = stmt.columnCount();
+		assert.equal(columnCount, 4);
+		const values: string[] = [];
+		while (stmt.step()) {
+			for (let i = 0; i < columnCount; i++) {
+				values.push(stmt.columnText(i));
+			}
+		}
+		assert.equal(values.length, 4);
+		stmt.finalize();
+		db.close();
+	});
+
 	it("should support randomness", async function() {
 		const db = await initDb();
 		const stmt = db.prepare("SELECT RANDOM(), RANDOM()")!;
@@ -90,19 +116,20 @@ describe("SQLite", function () {
 
 	it("should support parameterized query", async function() {
 		const db = await initDb();
-		const stmt = db.prepare("SELECT ?")!;
-		stmt.bindInt(1, 1);
+		const stmt = db.prepare("SELECT ?, ?, ?, ?, ?, ?, ?")!;
+		stmt.bind(1, 1.2, BigInt(1), "TEST", true, new ArrayBuffer(1), null);
 		const columnCount = stmt.columnCount();
-		assert.equal(columnCount, 1);
-		const values: number[] = [];
+		assert.equal(columnCount, 7);
+		const values: any[] = [];
 		while (stmt.step()) {
-			for (let i = 0; i < columnCount; i++) {
-				values.push(stmt.columnInt(i));
-			}
+			values.push(...stmt.columns());
 		}
-		stmt.finalize();
-		assert.equal(values.length, 1);
+		stmt.reset();
+		assert.equal(values.length, 7);
 		assert.equal(values[0], 1);
+		assert.equal(values[3], "TEST");
+		stmt.finalize();
+
 		db.close();
 	});
 
@@ -114,6 +141,28 @@ describe("SQLite", function () {
 		db.exec("INSERT INTO test (value) VALUES ('hello')");
 		const rows = db.exec("SELECT SQLITE_VERSION(); SELECT * FROM test;");
 		assert.equal(rows.length, 4);
+		db.close();
+	});
+
+	it("should catch error in exec", async function() {
+		const db = await initDb();
+		try {
+			db.exec("SELECT * FROM nope");
+			assert.fail("should have thrown");
+		} catch (e) {
+			// expected
+		}
+		db.close();
+	});
+
+	it("should catch error in prepare", async function() {
+		const db = await initDb();
+		try {
+			db.prepare("SELECT * FROM nope");
+			assert.fail("should have thrown");
+		} catch (e) {
+			// expected
+		}
 		db.close();
 	});
 
@@ -227,6 +276,48 @@ describe("SQLite", function () {
 			assert.equal(values[0], 1);
 		});
 
+		db.close();
+	});
+
+	it("should serialize and load", async function() {
+		const db = await initDb();
+		db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)");
+		db.exec("INSERT INTO test (value) VALUES ('hello')");
+		const buf = db.serialize();
+		const textDecoder = new TextDecoder();
+		if (buf === null) {
+			throw new Error("serialize failed");
+		}
+		const text = textDecoder.decode(buf.slice(0, 16));
+		assert.equal(text, "SQLite format 3\x00");
+
+		db.exec("INSERT INTO test (value) VALUES ('hello2')");
+
+		db.load(buf);
+		db.prepare("SELECT COUNT(*) FROM test", (stmt) => {
+			const columnCount = stmt.columnCount();
+			assert.equal(columnCount, 1);
+			const values: number[] = [];
+			while (stmt.step()) {
+				for (let i = 0; i < columnCount; i++) {
+					values.push(stmt.columnInt(i));
+				}
+			}
+			assert.equal(values.length, 1);
+			assert.equal(values[0], 1);
+		});
+
+		db.close();
+	});
+
+	it("should handle error in statement callback", async function() {
+		const db = await initDb();
+		let count = 0;
+		assert.throws(() => {
+			db.prepare("SELECT 1", () => {
+				throw new Error("test");
+			})
+		});
 		db.close();
 	});
 });

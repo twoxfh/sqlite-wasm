@@ -40,10 +40,10 @@ export class SQLite {
 			sqlite3_ext_os_init: () => {
 				const pId = sqlite.utils.malloc(4);
 				const rc = sqlite.exports.sqlite3_ext_vfs_register(0, 1, pId);
+				sqlite.utils.free(pId);
 				if (rc !== SQLiteResultCodes.SQLITE_OK) {
 					throw new Error(`Failed to register VFS: ${rc}`);
 				}
-				sqlite.utils.free(pId);
 				return SQLiteResultCodes.SQLITE_OK;
 			},
 			sqlite3_ext_os_end: () => {
@@ -86,9 +86,7 @@ export class SQLite {
 
 	public initialize(): void {
 		const rc = this.exports.sqlite3_initialize();
-		if (rc !== SQLiteResultCodes.SQLITE_OK) {
-			throw new SQLiteError(rc);
-		}
+		this.utils.checkError(rc);
 	}
 
 	public open(filename: string): SQLiteDB {
@@ -102,6 +100,11 @@ export class SQLite {
 		const pDb = this.utils.deref32(ppDb);
 		this.utils.free(ppDb);
 		return new SQLiteDB(this, pDb);
+	}
+
+	public shutdown(): void {
+		const rc = this.exports.sqlite3_shutdown();
+		this.utils.checkError(rc);
 	}
 }
 
@@ -187,9 +190,7 @@ export class SQLiteDB {
 		const rc = this.exports.sqlite3_ext_exec(this.pDb, pSql, 0, pzErr);
 		this.utils.free(pSql);
 		this.utils.free(pzErr);
-		if (rc !== SQLiteResultCodes.SQLITE_OK) {
-			throw this.utils.lastError(this.pDb);
-		}
+		this.utils.checkError(rc, this.pDb);
 		return results;
 	}
 
@@ -219,20 +220,32 @@ export class SQLiteDB {
 			pData,
 			BigInt(data.byteLength),
 			BigInt(data.byteLength),
-			mFlags & 1, // clear the SQLITE_DESERIALIZE_FREEONCLOSE flag
+			mFlags | 1 | 2, // add the FREEONCLOSE and RESIZABLE flag
 		);
 		this.utils.free(zSchema);
-		this.utils.free(pData);
-		if (rc !== SQLiteResultCodes.SQLITE_OK) {
-			throw this.utils.lastError(this.pDb);
+		this.utils.checkError(rc, this.pDb);
+	}
+
+	public load(data: ArrayBuffer, schema: string = "main"): void {
+		const backupDb = this.sqlite.open(":memory:");
+		const zSchema = this.utils.cString(schema);
+		const zMain = this.utils.cString("main");
+		backupDb.deserialize(data);
+		const pBackup = this.exports.sqlite3_backup_init(this.pDb, this.utils.cString(schema), backupDb.pDb, zMain);
+		if (pBackup != 0) {
+			this.exports.sqlite3_backup_step(pBackup, -1);
+			this.exports.sqlite3_backup_finish(pBackup);
 		}
+		const rc = this.exports.sqlite3_errcode(this.pDb);
+		this.utils.free(zSchema);
+		this.utils.free(zMain);
+		backupDb.close();
+		this.utils.checkError(rc, this.pDb);
 	}
 
 	public close(): void {
 		const rc = this.exports.sqlite3_close(this.pDb);
-		if (rc !== SQLiteResultCodes.SQLITE_OK) {
-			throw new SQLiteError(rc);
-		}
+		this.utils.checkError(rc);
 	}
 }
 
@@ -257,10 +270,8 @@ export class SQLiteStatement {
 	public bindText(i: number, text: string): void {
 		const textPtr = this.utils.cString(text);
 		const rc = this.exports.sqlite3_bind_text(this.pStmt, i, textPtr, -1, -1);
-		if (rc !== SQLiteResultCodes.SQLITE_OK) {
-			throw this.utils.lastError(this.db.pDb);
-		}
 		this.utils.free(textPtr);
+		this.utils.checkError(rc, this.pStmt);
 	}
 
 	public bindBlob(i: number, buf: ArrayBuffer): void {
@@ -268,38 +279,28 @@ export class SQLiteStatement {
 		const ptr = this.utils.malloc(view.length);
 		this.utils.u8.set(view, ptr);
 		const rc = this.exports.sqlite3_bind_blob(this.pStmt, i, ptr, view.length, -1);
-		if (rc !== SQLiteResultCodes.SQLITE_OK) {
-			throw this.utils.lastError(this.db.pDb);
-		}
 		this.utils.free(ptr);
+		this.utils.checkError(rc, this.db.pDb);
 	}
 
 	public bindDouble(i: number, d: number): void {
 		const rc = this.exports.sqlite3_bind_double(this.pStmt, i, d);
-		if (rc !== SQLiteResultCodes.SQLITE_OK) {
-			throw this.utils.lastError(this.db.pDb);
-		}
+		this.utils.checkError(rc, this.db.pDb);
 	}
 
 	public bindInt(i: number, i32: number): void {
 		const rc = this.exports.sqlite3_bind_int(this.pStmt, i, i32);
-		if (rc !== SQLiteResultCodes.SQLITE_OK) {
-			throw this.utils.lastError(this.db.pDb);
-		}
+		this.utils.checkError(rc, this.db.pDb);
 	}
 
 	public bindInt64(i: number, i64: bigint): void {
 		const rc = this.exports.sqlite3_bind_int64(this.pStmt, i, i64);
-		if (rc !== SQLiteResultCodes.SQLITE_OK) {
-			throw this.utils.lastError(this.db.pDb);
-		}
+		this.utils.checkError(rc, this.db.pDb);
 	}
 
 	public bindNull(i: number): void {
 		const rc = this.exports.sqlite3_bind_null(this.pStmt, i);
-		if (rc !== SQLiteResultCodes.SQLITE_OK) {
-			throw this.utils.lastError(this.db.pDb);
-		}
+		this.utils.checkError(rc, this.db.pDb);
 	}
 
 	public bindValue(i: number, value: ScalarIn): void {
@@ -343,9 +344,7 @@ export class SQLiteStatement {
 
 	public reset(): void {
 		const rc = this.exports.sqlite3_reset(this.pStmt);
-		if (rc !== SQLiteResultCodes.SQLITE_OK) {
-			throw this.utils.lastError(this.db.pDb);
-		}
+		this.utils.checkError(rc, this.db.pDb);
 	}
 
 	public columnType(i: number): SQLiteDatatype {
@@ -433,9 +432,7 @@ export class SQLiteStatement {
 
 	public finalize(): void {
 		const rc = this.exports.sqlite3_finalize(this.pStmt);
-		if (rc !== 0) {
-			throw this.utils.lastError(this.db.pDb);
-		}
+		this.utils.checkError(rc, this.db.pDb);
 		this.pStmt = 0;
 	}
 }
