@@ -1,7 +1,7 @@
 import * as fs from "fs/promises";
 
 import * as assert from "assert";
-import { SQLite } from "../src";
+import { SQLite, SQLiteResultCodes } from "../src";
 
 async function initModule() {
 	const wasm = await fs.readFile("./sqlite/sqlite3.wasm");
@@ -11,9 +11,13 @@ async function initModule() {
 
 const modulePromise = initModule();
 
-async function initDb() {
+async function initSQLite() {
 	const module = await modulePromise;
-	const sqlite = await SQLite.instantiate(module);
+	return await SQLite.instantiate(module);
+}
+
+async function initDb() {
+	const sqlite = await initSQLite();
 	return sqlite.open(":memory:");
 }
 
@@ -42,7 +46,7 @@ describe("SQLite", function () {
 		const module = await modulePromise;
 		const sqlite = await SQLite.instantiate(module);
 		assert.throws(() => {
-			sqlite.open("file.sqlite");
+			sqlite.open("nosuchfile");
 		});
 	});
 
@@ -115,11 +119,6 @@ describe("SQLite", function () {
 	});
 
 	it("should support randomness with crypto", async function() {
-		await new Promise<void>((resolve) => {
-			setTimeout(() => {
-				resolve();
-			}, 1000);
-		});
 		const module = await modulePromise;
 		globalThis.crypto = {
 			getRandomValues: (x: ArrayBuffer) => require("crypto").randomFillSync(x)
@@ -144,7 +143,7 @@ describe("SQLite", function () {
 	it("should support parameterized query", async function() {
 		const db = await initDb();
 		const stmt = db.prepare("SELECT ?, ?, ?, ?, ?, ?, ?")!;
-		stmt.bind(1, 1.2, BigInt(1), "TEST", true, new ArrayBuffer(1), null);
+		stmt.bindValues([1, 1.2, BigInt(1), "TEST", true, new ArrayBuffer(1), null]);
 		const columnCount = stmt.columnCount();
 		assert.equal(columnCount, 7);
 		const values: any[] = [];
@@ -157,6 +156,14 @@ describe("SQLite", function () {
 		assert.equal(values[3], "TEST");
 		stmt.finalize();
 
+		db.close();
+	});
+
+	it("should throw if binding unsupported type", async function() {
+		const db = await initDb();
+		const stmt = db.prepare("SELECT ?")!;
+		assert.throws(() => stmt.bindValues([{} as any]));
+		stmt.finalize();
 		db.close();
 	});
 
@@ -195,11 +202,11 @@ describe("SQLite", function () {
 
 	it("should support decltype", async function() {
 		const db = await initDb();
-		db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)");
+		db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT, nodecl)");
 		db.exec("INSERT INTO test (value) VALUES ('hello')");
 		db.prepare("SELECT * FROM test", (stmt) => {
 			const columnCount = stmt.columnCount();
-			assert.equal(columnCount, 2);
+			assert.equal(columnCount, 3);
 			while (stmt.step()) {
 				for (let i = 0; i < columnCount; i++) {
 					const decltype = stmt.columnDecltype(i);
@@ -209,6 +216,9 @@ describe("SQLite", function () {
 							break;
 						case 1:
 							assert.equal(decltype, "TEXT");
+							break;
+						case 2:
+							assert.equal(decltype, null)
 							break;
 					}
 				}
@@ -223,6 +233,14 @@ describe("SQLite", function () {
 		assert.equal(stmt.sql, "SELECT DATETIME();");
 		assert.equal(stmt.tail, " SELECT DATETIME(); SELECT DATETIME()");
 		stmt.finalize();
+		db.close();
+	});
+
+	it("should crash on improper use of step", async function() {
+		const db = await initDb();
+		const stmt = db.prepare("SELECT DATETIME();")!;
+		stmt.finalize();
+		assert.throws(() => stmt.step());
 		db.close();
 	});
 
@@ -307,7 +325,8 @@ describe("SQLite", function () {
 	});
 
 	it("should serialize and load", async function() {
-		const db = await initDb();
+		const sqlite = await initSQLite();
+		let db = sqlite.open(":memory:");
 		db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)");
 		db.exec("INSERT INTO test (value) VALUES ('hello')");
 		const buf = db.serialize();
@@ -319,8 +338,9 @@ describe("SQLite", function () {
 		assert.equal(text, "SQLite format 3\x00");
 
 		db.exec("INSERT INTO test (value) VALUES ('hello2')");
+		db.close();
 
-		db.load(buf);
+		db = sqlite.load(buf);
 		db.prepare("SELECT COUNT(*) FROM test", (stmt) => {
 			const columnCount = stmt.columnCount();
 			assert.equal(columnCount, 1);
@@ -339,13 +359,23 @@ describe("SQLite", function () {
 
 	it("should handle error in statement callback", async function() {
 		const db = await initDb();
-		let count = 0;
 		assert.throws(() => {
 			db.prepare("SELECT 1", () => {
 				throw new Error("test");
 			})
 		});
 		db.close();
+	});
+
+	describe("Utilities", () => {
+		it("should handle noop checkError", async function() {
+			const sqlite = await initSQLite();
+			sqlite.utils.checkError();
+		});
+		it("should handle checkError with no db", async function() {
+			const sqlite = await initSQLite();
+			assert.throws(() => sqlite.utils.checkError(SQLiteResultCodes.SQLITE_ERROR));
+		});
 	});
 });
 

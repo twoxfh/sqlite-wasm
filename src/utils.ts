@@ -70,12 +70,15 @@ export class SQLiteUtils {
 		return new SQLiteError(code, extendedCode, message);
 	}
 
-	public checkError(rc: number, dbPtr?: number): void {
+	public checkError(rc?: number, dbPtr?: number): void {
+		if (rc === undefined && dbPtr === undefined) {
+			return;
+		}
 		if (rc === SQLiteResultCodes.SQLITE_OK || rc === SQLiteResultCodes.SQLITE_ROW || rc === SQLiteResultCodes.SQLITE_DONE) {
 			return;
 		}
 		if (dbPtr === undefined) {
-			throw new SQLiteError(rc);
+			throw new SQLiteError(rc!);
 		}
 		const error = this.lastError(dbPtr);
 		if (error !== undefined) {

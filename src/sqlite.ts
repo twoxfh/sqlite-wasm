@@ -21,6 +21,12 @@ export class SQLite {
 
 		const imports: SQLiteImports = {
 			...unimplementedImports,
+			sqlite3_ext_vfs_get_last_error: () => {
+				return SQLiteResultCodes.SQLITE_OK;
+			},
+			sqlite3_ext_vfs_full_pathname: () => {
+				return SQLiteResultCodes.SQLITE_CANTOPEN;
+			},
 			sqlite3_ext_vfs_current_time: (_, pTimeOut) => {
 				const f64 = sqlite.utils.f64;
 				f64[pTimeOut / 8] = Date.now() / 86400000 + 2440587.5;
@@ -41,9 +47,7 @@ export class SQLite {
 				const pId = sqlite.utils.malloc(4);
 				const rc = sqlite.exports.sqlite3_ext_vfs_register(0, 1, pId);
 				sqlite.utils.free(pId);
-				if (rc !== SQLiteResultCodes.SQLITE_OK) {
-					throw new Error(`Failed to register VFS: ${rc}`);
-				}
+				sqlite.utils.checkError(rc);
 				return SQLiteResultCodes.SQLITE_OK;
 			},
 			sqlite3_ext_os_end: () => {
@@ -102,6 +106,25 @@ export class SQLite {
 		return new SQLiteDB(this, pDb);
 	}
 
+	public load(data: ArrayBuffer, schema: string = "main"): SQLiteDB {
+		const db = this.open(":memory:");
+		const backupDb = this.open(":memory:");
+		const zSchema = this.utils.cString(schema);
+		const zMain = this.utils.cString("main");
+		backupDb.deserialize(data);
+		const pBackup = this.exports.sqlite3_backup_init(db.pDb, this.utils.cString(schema), backupDb.pDb, zMain);
+		if (pBackup != 0) {
+			this.exports.sqlite3_backup_step(pBackup, -1);
+			this.exports.sqlite3_backup_finish(pBackup);
+		}
+		const rc = this.exports.sqlite3_errcode(db.pDb);
+		this.utils.free(zSchema);
+		this.utils.free(zMain);
+		backupDb.close();
+		this.utils.checkError(rc, db.pDb);
+		return db;
+	}
+
 	public shutdown(): void {
 		const rc = this.exports.sqlite3_shutdown();
 		this.utils.checkError(rc);
@@ -126,11 +149,8 @@ export class SQLiteDB {
 	public prepare(sql: string, callback: (stmt: SQLiteStatement) => void): void;
 	public prepare(sql: string, callback?: (stmt: SQLiteStatement) => void): SQLiteStatement | null | void {
 		if (callback !== undefined) {
-			let nextSql: string | undefined = sql;
+			let nextSql: string = sql;
 			while (true) {
-				if (nextSql === undefined) {
-					return;
-				}
 				const stmt: SQLiteStatement | null = this.prepare(nextSql);
 				if (stmt === null) {
 					return;
@@ -142,7 +162,7 @@ export class SQLiteDB {
 					throw e;
 				}
 				stmt.finalize();
-				nextSql = stmt.tail;
+				nextSql = stmt.tail ?? "";
 			}
 		}
 		const zSql = this.utils.cString(sql);
@@ -223,23 +243,6 @@ export class SQLiteDB {
 			mFlags | 1 | 2, // add the FREEONCLOSE and RESIZABLE flag
 		);
 		this.utils.free(zSchema);
-		this.utils.checkError(rc, this.pDb);
-	}
-
-	public load(data: ArrayBuffer, schema: string = "main"): void {
-		const backupDb = this.sqlite.open(":memory:");
-		const zSchema = this.utils.cString(schema);
-		const zMain = this.utils.cString("main");
-		backupDb.deserialize(data);
-		const pBackup = this.exports.sqlite3_backup_init(this.pDb, this.utils.cString(schema), backupDb.pDb, zMain);
-		if (pBackup != 0) {
-			this.exports.sqlite3_backup_step(pBackup, -1);
-			this.exports.sqlite3_backup_finish(pBackup);
-		}
-		const rc = this.exports.sqlite3_errcode(this.pDb);
-		this.utils.free(zSchema);
-		this.utils.free(zMain);
-		backupDb.close();
 		this.utils.checkError(rc, this.pDb);
 	}
 
@@ -325,7 +328,7 @@ export class SQLiteStatement {
 		throw new Error(`Unsupported type ${typeof value}: ${value}`);
 	}
 
-	public bind(...values: ScalarIn[]): void {
+	public bindValues(values: ScalarIn[]): void {
 		for (let i = 0; i < values.length; i++) {
 			this.bindValue(i + 1, values[i]);
 		}
@@ -413,6 +416,7 @@ export class SQLiteStatement {
 			case SQLiteDatatypes.SQLITE_FLOAT:
 				return this.columnDouble(i);
 			default:
+				/* istanbul ignore next - should not happen, all types covered */
 				throw new Error(`Unknown column type: ${type}`);
 		}
 	}
