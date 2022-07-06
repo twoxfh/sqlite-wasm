@@ -38,7 +38,7 @@
 	"scripts": {
 		"build": "make && rm -rf dist/cjs dist/esm dist/wasm && mkdir -p dist/wasm && cp sqlite/sqlite3.wasm dist/wasm/sqlite3.wasm && tsc -p ./tsconfig.json && tsc -p ./tsconfig.esm.json",
 		"tsr": "node --loader ts-node/esm",
-		"test": "nyc --reporter=text --reporter=lcov --reporter=json-summary node --enable-source-maps --loader ts-node/esm ./node_modules/mocha/bin/_mocha tests/*",
+		"test": "nyc --reporter=text --reporter=lcov --reporter=json-summary node --enable-source-maps --experimental-wasm-bigint --loader ts-node/esm ./node_modules/mocha/bin/_mocha tests/*",
 		"docs": "typedoc --out docs src/index.ts",
 		"prepack": "yarn test && yarn build && yarn badgen",
 		"badgen": "yarn tsr ./scripts/badgen.ts"
