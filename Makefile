@@ -1,9 +1,9 @@
-WASI_SDK_PATH ?= /opt/wasi-sdk-15.0
+WASI_SDK_PATH ?= ./wasi-sdk-16.0
 CC = "${WASI_SDK_PATH}/bin/clang"
 LD = "${WASI_SDK_PATH}/bin/wasm-ld"
 
 CFLAGS = -x c -Os -flto --target=wasm32 --sysroot=${WASI_SDK_PATH}/share/wasi-sysroot -D__wasi_api_h '-DEXPORT=__attribute__((visibility("default")))'
-LDFLAGS = -O9 -m wasm32 -L$(WASI_SDK_PATH)/share/wasi-sysroot/lib/wasm32-wasi --no-entry -lc -lm --export-dynamic "$(WASI_SDK_PATH)/lib/clang/14.0.3/lib/wasi/libclang_rt.builtins-wasm32.a"
+LDFLAGS = -O9 -m wasm32 -L$(WASI_SDK_PATH)/share/wasi-sysroot/lib/wasm32-wasi --no-entry -lc -lm --export-dynamic "$(WASI_SDK_PATH)/lib/clang/14.0.4/lib/wasi/libclang_rt.builtins-wasm32.a"
 
 SQLITE_FLAGS = \
 	-DSQLITE_THREADSAFE=0 \
